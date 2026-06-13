@@ -81,16 +81,18 @@ def _run_top_queries(service: Any, site_url: str, start: str, end: str) -> list[
 
 
 def fetch(site_url: str) -> dict[str, Any]:
-    """Fetch GSC data for 10–4 days ago plus the 7 days before that.
+    """Fetch GSC data for the last 7 full days vs the 7 days before that.
 
-    GSC has ~3-day data delay, so we shift the window back to get reliable data.
+    Matches the GA4 comparison window exactly (yesterday − 6 → yesterday).
+    Note: GSC has a ~3-day data delay, so the most recent days may still be
+    incomplete, but the period is kept consistent with all other sources.
     """
     service = _get_service()
 
-    # Current period: 10 days ago → 4 days ago (7 days, after delay)
-    curr_start, curr_end = _date_range(10, 4)
-    # Previous period: 17 days ago → 11 days ago
-    prev_start, prev_end = _date_range(17, 11)
+    # Current period: 7 days ago → yesterday
+    curr_start, curr_end = _date_range(7, 1)
+    # Previous period: 14 days ago → 8 days ago
+    prev_start, prev_end = _date_range(14, 8)
 
     logger.info("GSC %s: %s–%s vs %s–%s", site_url, curr_start, curr_end, prev_start, prev_end)
 
