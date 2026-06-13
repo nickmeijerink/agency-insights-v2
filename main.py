@@ -72,7 +72,7 @@ def run_client(cfg: dict[str, Any]) -> None:
     }
 
     try:
-        text = summarize.summarize(name, week_nr, combined)
+        sections = summarize.summarize(name, week_nr, combined)
     except Exception:
         logger.exception("Summarise failed for %s", name)
         return
@@ -84,7 +84,7 @@ def run_client(cfg: dict[str, Any]) -> None:
         return
 
     try:
-        slack.post(webhook, name, text)
+        slack.post(webhook, name, sections)
     except Exception:
         logger.exception("Slack post failed for %s", name)
 
