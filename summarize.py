@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from typing import Any
 
 import anthropic
@@ -18,17 +19,22 @@ _SYSTEM = (
     "de vorige periode. Noem concrete cijfers en percentages. Geen jargon zonder uitleg."
 )
 
-_USER_TEMPLATE = """Analyseer de onderstaande marketingdata voor {client_name} (week {week_nr}) en lever een JSON-object terug met precies de volgende sleutels:
+_USER_TEMPLATE = """Analyseer de onderstaande marketingdata voor {client_name} (week {week_nr}).
 
-- "ga4": korte samenvatting van de Google Analytics 4 opvallendheden (max 4 regels, Slack mrkdwn, bullet points met •)
-- "gsc": korte samenvatting van de Search Console opvallendheden (max 4 regels, Slack mrkdwn, bullet points met •)
-- "ads": korte samenvatting van de Google Ads opvallendheden (max 4 regels, Slack mrkdwn, bullet points met •), of null als er geen Ads-data is
-- "tips": 2 à 3 concrete, actionable tips voor deze week gebaseerd op alle resultaten samen (max 4 regels, Slack mrkdwn, genummerd met 1. 2. 3.)
+Retourneer uitsluitend een geldig JSON-object met precies deze vier sleutels. Geen markdown, geen uitleg, geen codeblokken — alleen het JSON-object zelf:
 
-Lever ALLEEN het JSON-object terug, zonder markdown-codeblokken of extra tekst.
+{{
+  "ga4": "<samenvatting GA4, max 4 bullet points met •, Slack mrkdwn>",
+  "gsc": "<samenvatting Search Console, max 4 bullet points met •, Slack mrkdwn>",
+  "ads": "<samenvatting Google Ads, max 4 bullet points met •, Slack mrkdwn> of null als geen Ads-data",
+  "tips": "<2-3 concrete actionable tips, genummerd 1. 2. 3., Slack mrkdwn>"
+}}
 
 DATA:
 {data_json}"""
+
+# Prefill forces Claude to begin the response with `{` — no preamble possible
+_ASSISTANT_PREFILL = "{"
 
 
 @dataclass
@@ -37,6 +43,16 @@ class ReportSections:
     gsc: str = ""
     ads: str | None = None
     tips: str = ""
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove markdown code fences (```json ... ``` or ``` ... ```) if present."""
+    text = text.strip()
+    # Match optional language tag after opening fence
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def summarize(client_name: str, week_nr: int, data: dict[str, Any]) -> ReportSections:
@@ -54,18 +70,28 @@ def summarize(client_name: str, week_nr: int, data: dict[str, Any]) -> ReportSec
         model="claude-sonnet-4-6",
         max_tokens=1200,
         system=_SYSTEM,
-        messages=[{"role": "user", "content": user_message}],
+        messages=[
+            {"role": "user", "content": user_message},
+            # Prefill: Claude will continue from this opening brace → guaranteed JSON start
+            {"role": "assistant", "content": _ASSISTANT_PREFILL},
+        ],
     )
 
-    raw = next(
+    completion = next(
         (block.text for block in response.content if block.type == "text"),
-        "{}",
+        "",
     )
+    # Reconstruct the full JSON: prepend the prefill character we injected
+    raw = _ASSISTANT_PREFILL + completion
+
     logger.debug(
         "Summary tokens: input=%d output=%d",
         response.usage.input_tokens,
         response.usage.output_tokens,
     )
+
+    # Safety net: strip code fences in case the model ignored the prefill somehow
+    raw = _strip_code_fences(raw)
 
     try:
         parsed = json.loads(raw)
