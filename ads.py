@@ -78,16 +78,21 @@ def _run_summary(client: Any, customer_id: str, start: str, end: str) -> dict[st
 def _run_top_campaigns(
     client: Any, customer_id: str, start: str, end: str
 ) -> list[dict[str, Any]]:
-    """Fetch top 5 campaigns by spend for the given date range."""
+    """Fetch top 5 campaigns by spend, including impression share metrics."""
     ga_service = client.get_service("GoogleAdsService")
 
+    # Note: search_impression_share and lost IS are only available at campaign level,
+    # not at the customer resource level.
     query = f"""
         SELECT
             campaign.name,
             metrics.clicks,
             metrics.impressions,
             metrics.cost_micros,
-            metrics.conversions
+            metrics.conversions,
+            metrics.search_impression_share,
+            metrics.search_budget_lost_impression_share,
+            metrics.search_rank_lost_impression_share
         FROM campaign
         WHERE segments.date BETWEEN '{start}' AND '{end}'
             AND campaign.status != 'REMOVED'
@@ -101,6 +106,15 @@ def _run_top_campaigns(
     campaigns = []
     for row in response:
         m = row.metrics
+
+        # Impression share values are floats 0–1; the API returns a sentinel
+        # value of 0.1 for "<10%" and may be None/0 when not enough data.
+        def _pct(val: float) -> float | None:
+            """Convert 0–1 fraction to rounded percentage, or None if unavailable."""
+            if val is None or val == 0.0:
+                return None
+            return round(val * 100, 1)
+
         campaigns.append(
             {
                 "name": row.campaign.name,
@@ -108,9 +122,41 @@ def _run_top_campaigns(
                 "impressions": int(m.impressions),
                 "cost_eur": round(m.cost_micros / 1_000_000, 2),
                 "conversions": round(m.conversions, 1),
+                "search_impression_share_pct": _pct(m.search_impression_share),
+                "lost_is_budget_pct": _pct(m.search_budget_lost_impression_share),
+                "lost_is_rank_pct": _pct(m.search_rank_lost_impression_share),
             }
         )
     return campaigns
+
+
+def _compute_account_impression_share(campaigns: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute impression-weighted average IS across campaigns."""
+    total_imp = sum(c["impressions"] for c in campaigns)
+    if total_imp == 0:
+        return {}
+
+    def _wavg(key: str) -> float | None:
+        values = [(c[key], c["impressions"]) for c in campaigns if c.get(key) is not None]
+        if not values:
+            return None
+        weighted = sum(v * imp for v, imp in values)
+        weight = sum(imp for _, imp in values)
+        return round(weighted / weight, 1) if weight else None
+
+    result: dict[str, Any] = {}
+    avg_is = _wavg("search_impression_share_pct")
+    avg_lost_budget = _wavg("lost_is_budget_pct")
+    avg_lost_rank = _wavg("lost_is_rank_pct")
+
+    if avg_is is not None:
+        result["search_impression_share_pct"] = avg_is
+    if avg_lost_budget is not None:
+        result["lost_is_budget_pct"] = avg_lost_budget
+    if avg_lost_rank is not None:
+        result["lost_is_rank_pct"] = avg_lost_rank
+
+    return result
 
 
 def fetch(customer_id: str) -> dict[str, Any] | None:
@@ -135,9 +181,7 @@ def fetch(customer_id: str) -> dict[str, Any] | None:
 
     cid = _clean_customer_id(customer_id)
 
-    # Current period: 7 days ago → yesterday
     curr_start, curr_end = _date_range(7, 1)
-    # Previous period: 14 days ago → 8 days ago
     prev_start, prev_end = _date_range(14, 8)
 
     logger.info("Ads %s: %s–%s vs %s–%s", cid, curr_start, curr_end, prev_start, prev_end)
@@ -146,10 +190,12 @@ def fetch(customer_id: str) -> dict[str, Any] | None:
     current = _run_summary(client, cid, curr_start, curr_end)
     previous = _run_summary(client, cid, prev_start, prev_end)
     top_campaigns = _run_top_campaigns(client, cid, curr_start, curr_end)
+    account_is = _compute_account_impression_share(top_campaigns)
 
     return {
         "period": {"start": curr_start, "end": curr_end},
         "current": current,
         "previous": previous,
+        "account_impression_share": account_is,
         "top_campaigns": top_campaigns,
     }

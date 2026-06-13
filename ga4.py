@@ -30,10 +30,6 @@ def _get_client() -> BetaAnalyticsDataClient:
 
 
 def _date_range(offset_start: int, offset_end: int) -> tuple[str, str]:
-    """Return (start, end) date strings relative to today.
-
-    offset_start=8, offset_end=2 → 8 days ago through 2 days ago.
-    """
     today = date.today()
     start = (today - timedelta(days=offset_start)).isoformat()
     end = (today - timedelta(days=offset_end)).isoformat()
@@ -95,13 +91,55 @@ def _run_channels(
     return channels
 
 
+def _run_top_pages(
+    client: BetaAnalyticsDataClient,
+    property_id: str,
+    curr_start: str,
+    curr_end: str,
+    prev_start: str,
+    prev_end: str,
+) -> list[dict[str, Any]]:
+    """Top 5 pages by pageviews this week, with previous-week comparison."""
+
+    def _fetch_page_views(start: str, end: str, limit: int = 10) -> dict[str, int]:
+        req = RunReportRequest(
+            property=f"properties/{property_id}",
+            date_ranges=[DateRange(start_date=start, end_date=end)],
+            dimensions=[Dimension(name="pagePath")],
+            metrics=[Metric(name="screenPageViews")],
+            order_bys=[
+                OrderBy(metric=OrderBy.MetricOrderBy(metric_name="screenPageViews"), desc=True)
+            ],
+            limit=limit,
+        )
+        resp = client.run_report(req)
+        return {
+            row.dimension_values[0].value: int(float(row.metric_values[0].value))
+            for row in resp.rows
+        }
+
+    curr_pages = _fetch_page_views(curr_start, curr_end, limit=5)
+    # Fetch more from previous period so we can match all current top-5 pages
+    prev_pages = _fetch_page_views(prev_start, prev_end, limit=20)
+
+    pages = []
+    for path, views in curr_pages.items():
+        prev_views = prev_pages.get(path, 0)
+        pages.append(
+            {
+                "path": path,
+                "views": views,
+                "views_prev": prev_views,
+            }
+        )
+    return pages
+
+
 def fetch(property_id: str) -> dict[str, Any]:
     """Fetch GA4 data for the last 7 full days plus the 7 days before that."""
     client = _get_client()
 
-    # Current period: yesterday-6 → yesterday (7 days)
     curr_start, curr_end = _date_range(7, 1)
-    # Previous period: 14 days ago → 8 days ago (7 days)
     prev_start, prev_end = _date_range(14, 8)
 
     logger.info("GA4 %s: %s–%s vs %s–%s", property_id, curr_start, curr_end, prev_start, prev_end)
@@ -109,10 +147,12 @@ def fetch(property_id: str) -> dict[str, Any]:
     current = _run_summary(client, property_id, curr_start, curr_end)
     previous = _run_summary(client, property_id, prev_start, prev_end)
     channels = _run_channels(client, property_id, curr_start, curr_end)
+    top_pages = _run_top_pages(client, property_id, curr_start, curr_end, prev_start, prev_end)
 
     return {
         "period": {"start": curr_start, "end": curr_end},
         "current": current,
         "previous": previous,
         "top_channels": channels,
+        "top_pages": top_pages,
     }

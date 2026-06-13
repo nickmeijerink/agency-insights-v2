@@ -53,53 +53,80 @@ def _run_summary(service: Any, site_url: str, start: str, end: str) -> dict[str,
     }
 
 
-def _run_top_queries(service: Any, site_url: str, start: str, end: str) -> list[dict[str, Any]]:
-    # Note: the GSC API does not support an orderBy field; results are returned
-    # in descending click order by default when the query dimension is used.
+def _run_queries(service: Any, site_url: str, start: str, end: str, limit: int = 10) -> dict[str, dict]:
+    """Fetch queries and return as {query: metrics} dict for easy joining."""
     body = {
         "startDate": start,
         "endDate": end,
         "dimensions": ["query"],
-        "rowLimit": 5,
+        "rowLimit": limit,
     }
     response = (
         service.searchanalytics()
         .query(siteUrl=site_url, body=body)
         .execute()
     )
-    queries = []
+    result = {}
     for row in response.get("rows", []):
-        queries.append(
+        query = row["keys"][0]
+        result[query] = {
+            "clicks": row.get("clicks", 0),
+            "impressions": row.get("impressions", 0),
+            "ctr": round(row.get("ctr", 0.0) * 100, 2),
+            "position": round(row.get("position", 0.0), 1),
+        }
+    return result
+
+
+def _run_top_queries_compared(
+    service: Any,
+    site_url: str,
+    curr_start: str,
+    curr_end: str,
+    prev_start: str,
+    prev_end: str,
+) -> list[dict[str, Any]]:
+    """Top 5 queries by clicks this week, with previous-week comparison."""
+    curr = _run_queries(service, site_url, curr_start, curr_end, limit=5)
+    # Fetch more from prev so we can match all current top-5 queries
+    prev = _run_queries(service, site_url, prev_start, prev_end, limit=20)
+
+    results = []
+    for query, metrics in curr.items():
+        prev_metrics = prev.get(query, {"clicks": 0, "impressions": 0, "ctr": 0.0, "position": 0.0})
+        clicks_delta = metrics["clicks"] - prev_metrics["clicks"]
+        # Positive position_delta = moved up in rankings (lower number = better)
+        position_delta = round(prev_metrics["position"] - metrics["position"], 1)
+        results.append(
             {
-                "query": row["keys"][0],
-                "clicks": row.get("clicks", 0),
-                "impressions": row.get("impressions", 0),
-                "ctr": round(row.get("ctr", 0.0) * 100, 2),
-                "position": round(row.get("position", 0.0), 1),
+                "query": query,
+                "clicks": metrics["clicks"],
+                "impressions": metrics["impressions"],
+                "ctr": metrics["ctr"],
+                "position": metrics["position"],
+                "prev_clicks": prev_metrics["clicks"],
+                "prev_position": prev_metrics["position"],
+                "clicks_delta": clicks_delta,
+                "position_delta": position_delta,  # positive = ranking improved
             }
         )
-    return queries
+    return results
 
 
 def fetch(site_url: str) -> dict[str, Any]:
-    """Fetch GSC data for the last 7 full days vs the 7 days before that.
-
-    Matches the GA4 comparison window exactly (yesterday − 6 → yesterday).
-    Note: GSC has a ~3-day data delay, so the most recent days may still be
-    incomplete, but the period is kept consistent with all other sources.
-    """
+    """Fetch GSC data for the last 7 full days vs the 7 days before that."""
     service = _get_service()
 
-    # Current period: 7 days ago → yesterday
     curr_start, curr_end = _date_range(7, 1)
-    # Previous period: 14 days ago → 8 days ago
     prev_start, prev_end = _date_range(14, 8)
 
     logger.info("GSC %s: %s–%s vs %s–%s", site_url, curr_start, curr_end, prev_start, prev_end)
 
     current = _run_summary(service, site_url, curr_start, curr_end)
     previous = _run_summary(service, site_url, prev_start, prev_end)
-    top_queries = _run_top_queries(service, site_url, curr_start, curr_end)
+    top_queries = _run_top_queries_compared(
+        service, site_url, curr_start, curr_end, prev_start, prev_end
+    )
 
     return {
         "period": {"start": curr_start, "end": curr_end},
