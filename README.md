@@ -42,17 +42,32 @@ Maak lokaal een `.env`-bestand (nooit committen!) of stel GitHub Secrets in:
 
 | Variabele | Beschrijving |
 |---|---|
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | De volledige inhoud van je service-account JSON-bestand |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | De volledige inhoud van je service-account JSON-bestand (voor GA4 + GSC) |
 | `ANTHROPIC_API_KEY` | Je Anthropic API-sleutel |
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL (fallback voor alle klanten) |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Developer token uit het Google Ads API Center |
+| `GOOGLE_ADS_CLIENT_ID` | OAuth2 client ID uit Google Cloud Console |
+| `GOOGLE_ADS_CLIENT_SECRET` | OAuth2 client secret uit Google Cloud Console |
+| `GOOGLE_ADS_REFRESH_TOKEN` | OAuth2 refresh token (zie stap 4 hieronder) |
 
-### 3. Google-serviceaccount instellen
+### 3. Google-serviceaccount instellen (GA4 + GSC)
 
 1. Maak een serviceaccount aan in Google Cloud Console.
 2. Ken de volgende rollen toe:
    - **Google Analytics**: voeg het serviceaccount-e-mailadres toe als *Viewer* in GA4 Property-instellingen → Toegangsbeheer.
    - **Search Console**: voeg het e-mailadres toe als *Eigenaar* of *Volledig* in GSC → Instellingen → Gebruikers en machtigingen.
 3. Maak een JSON-sleutel aan en kopieer de **volledige inhoud** als waarde voor `GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+### 4. Google Ads API instellen
+
+Google Ads gebruikt OAuth2, niet een serviceaccount. Volg deze stappen:
+
+1. **Developer token**: Ga naar [ads.google.com](https://ads.google.com) → Tools → API Center. Kopieer het developer token.
+2. **OAuth2 credentials**: Maak in Google Cloud Console een *OAuth 2.0 Client ID* aan (type: *Desktop app*). Kopieer client ID en client secret.
+3. **Refresh token genereren**: Gebruik de [OAuth2 Playground](https://developers.google.com/oauthplayground/) of de `google-ads` bibliotheek om een refresh token te genereren met scope `https://www.googleapis.com/auth/adwords`.
+4. Sla de vier waarden op als GitHub Secrets (zie tabel hierboven).
+
+> **Let op:** De `google_ads_customer_id` in `clients.yaml` mag dashes bevatten (`698-868-8484`) — de code strip die automatisch.
 
 ---
 
