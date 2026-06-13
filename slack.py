@@ -42,29 +42,42 @@ def post(webhook_url: str, client_name: str, sections: ReportSections) -> None:
         # ── Vaste opening ───────────────────────────────────────────────────
         _section(_OPENING),
         {"type": "divider"},
-        # ── GA4 ─────────────────────────────────────────────────────────────
-        _section("*📊 Google Analytics 4*"),
-        _section(sections.ga4),
-        {"type": "divider"},
-        # ── GSC ─────────────────────────────────────────────────────────────
-        _section("*🔍 Google Search Console*"),
-        _section(sections.gsc),
     ]
+
+    # ── GA4 (altijd aanwezig) ────────────────────────────────────────────────
+    if sections.ga4:
+        blocks += [
+            _section("*📊 Google Analytics 4*"),
+            _section(sections.ga4),
+            {"type": "divider"},
+        ]
+
+    # ── GSC (alleen als er data is) ──────────────────────────────────────────
+    if sections.gsc:
+        blocks += [
+            _section("*🔍 Google Search Console*"),
+            _section(sections.gsc),
+            {"type": "divider"},
+        ]
 
     # ── Google Ads (optioneel) ───────────────────────────────────────────────
     if sections.ads:
         blocks += [
-            {"type": "divider"},
             _section("*📣 Google Ads*"),
             _section(sections.ads),
+            {"type": "divider"},
         ]
 
     # ── Tips ────────────────────────────────────────────────────────────────
+    if sections.tips:
+        blocks += [
+            _section("*💡 Tips voor deze week*"),
+            _section(sections.tips),
+            {"type": "divider"},
+        ]
+
+    # Afsluiting zonder trailing divider
     blocks += [
-        {"type": "divider"},
-        _section("*💡 Tips voor deze week*"),
-        _section(sections.tips),
-        {"type": "divider"},
         # ── Vaste afsluiting ────────────────────────────────────────────────
         _section(_CLOSING),
     ]
