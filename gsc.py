@@ -54,12 +54,13 @@ def _run_summary(service: Any, site_url: str, start: str, end: str) -> dict[str,
 
 
 def _run_top_queries(service: Any, site_url: str, start: str, end: str) -> list[dict[str, Any]]:
+    # Note: the GSC API does not support an orderBy field; results are returned
+    # in descending click order by default when the query dimension is used.
     body = {
         "startDate": start,
         "endDate": end,
         "dimensions": ["query"],
         "rowLimit": 5,
-        "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}],
     }
     response = (
         service.searchanalytics()
