@@ -3,4 +3,5 @@ clients:
     ga4_property_id: "254303801"
     gsc_site_url: "sc-domain:brainpink.nl"
     google_ads_customer_id: "698-868-8484"
+    google_ads_mcc_id: "813-457-2105"
     slack_webhook: ""            # leeg = valt terug op env var SLACK_WEBHOOK_URL

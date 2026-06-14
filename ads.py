@@ -16,8 +16,12 @@ def _date_range(offset_start: int, offset_end: int) -> tuple[str, str]:
     return start, end
 
 
-def _get_client() -> Any:
-    """Build a GoogleAdsClient from environment variables."""
+def _get_client(login_customer_id: str | None = None) -> Any:
+    """Build a GoogleAdsClient from environment variables.
+
+    login_customer_id should be the MCC account ID (without dashes) when
+    accessing a client account underneath a manager account.
+    """
     from google.ads.googleads.client import GoogleAdsClient  # noqa: PLC0415
 
     config = {
@@ -27,6 +31,8 @@ def _get_client() -> Any:
         "refresh_token": os.environ["GOOGLE_ADS_REFRESH_TOKEN"],
         "use_proto_plus": True,
     }
+    if login_customer_id:
+        config["login_customer_id"] = login_customer_id
     return GoogleAdsClient.load_from_dict(config)
 
 
@@ -159,8 +165,12 @@ def _compute_account_impression_share(campaigns: list[dict[str, Any]]) -> dict[s
     return result
 
 
-def fetch(customer_id: str) -> dict[str, Any] | None:
+def fetch(customer_id: str, mcc_customer_id: str = "") -> dict[str, Any] | None:
     """Fetch Google Ads data for the last 7 days vs the 7 days before that.
+
+    customer_id     — the client account (e.g. '698-868-8484')
+    mcc_customer_id — the MCC/manager account to log in as (e.g. '813-457-2105').
+                      Required when the OAuth user is a manager, not a direct account owner.
 
     Returns None when customer_id is empty or required env vars are missing.
     """
@@ -180,13 +190,14 @@ def fetch(customer_id: str) -> dict[str, Any] | None:
         return None
 
     cid = _clean_customer_id(customer_id)
+    login_cid = _clean_customer_id(mcc_customer_id) if mcc_customer_id else None
 
     curr_start, curr_end = _date_range(7, 1)
     prev_start, prev_end = _date_range(14, 8)
 
-    logger.info("Ads %s: %s–%s vs %s–%s", cid, curr_start, curr_end, prev_start, prev_end)
+    logger.info("Ads %s (via MCC %s): %s–%s vs %s–%s", cid, login_cid, curr_start, curr_end, prev_start, prev_end)
 
-    client = _get_client()
+    client = _get_client(login_customer_id=login_cid)
     current = _run_summary(client, cid, curr_start, curr_end)
     previous = _run_summary(client, cid, prev_start, prev_end)
     top_campaigns = _run_top_campaigns(client, cid, curr_start, curr_end)

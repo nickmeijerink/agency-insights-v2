@@ -59,7 +59,10 @@ def run_client(cfg: dict[str, Any]) -> None:
         logger.exception("GSC fetch failed for %s", name)
 
     try:
-        ads_data = ads.fetch(cfg.get("google_ads_customer_id", ""))
+        ads_data = ads.fetch(
+            cfg.get("google_ads_customer_id", ""),
+            mcc_customer_id=cfg.get("google_ads_mcc_id", ""),
+        )
     except Exception:
         logger.exception("Ads fetch failed for %s", name)
 
