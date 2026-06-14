@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 
@@ -23,10 +23,32 @@ def _section(text: str) -> dict:
     return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
 
 
+_MAANDEN = [
+    "", "januari", "februari", "maart", "april", "mei", "juni",
+    "juli", "augustus", "september", "oktober", "november", "december",
+]
+
+
+def _format_date(d: date) -> str:
+    return f"{d.day} {_MAANDEN[d.month]}"
+
+
 def post(webhook_url: str, client_name: str, sections: ReportSections) -> None:
     """Build a Block Kit payload and POST it to the Slack webhook."""
-    week_nr = date.today().isocalendar()[1]
-    year = date.today().year
+    today = date.today()
+    week_nr = today.isocalendar()[1]
+    year = today.year
+
+    # Current period: yesterday-6 → yesterday (matches ga4.py / gsc.py)
+    curr_end = today - timedelta(days=1)
+    curr_start = today - timedelta(days=7)
+    prev_end = today - timedelta(days=8)
+    prev_start = today - timedelta(days=14)
+
+    period_line = (
+        f"_Periode: *{_format_date(curr_start)} – {_format_date(curr_end)}* "
+        f"vergeleken met {_format_date(prev_start)} – {_format_date(prev_end)}._"
+    )
 
     blocks: list[dict] = [
         # ── Header ──────────────────────────────────────────────────────────
@@ -41,6 +63,7 @@ def post(webhook_url: str, client_name: str, sections: ReportSections) -> None:
         {"type": "divider"},
         # ── Vaste opening ───────────────────────────────────────────────────
         _section(_OPENING),
+        _section(period_line),
         {"type": "divider"},
     ]
 
