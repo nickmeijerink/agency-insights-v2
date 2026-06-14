@@ -21,30 +21,27 @@ _SYSTEM = (
 
 _USER_TEMPLATE = """Analyseer de onderstaande marketingdata voor {client_name} (week {week_nr}).
 
-Retourneer uitsluitend een geldig JSON-object met precies deze vier sleutels. Geen markdown, geen uitleg, geen codeblokken — alleen het JSON-object zelf.
+Retourneer UITSLUITEND een geldig JSON-object — geen inleiding, geen uitleg, geen markdown, \
+geen codeblokken. Start direct met {{ en eindig met }}.
 
-Richtlijnen per sectie:
+Gebruik precies deze vier sleutels:
 
 "ga4": 4–5 bullet points (•). Benoem de kernmetrics (sessies, gebruikers) met % verandering. \
-Noem daarna de top pagina's bij naam (gebruik het paginapad) en highlight stijgers/dalers t.o.v. vorige week \
-als die opvallend zijn (bijv. >20% verschil).
+Noem daarna de top pagina's bij naam (gebruik het paginapad) en highlight stijgers/dalers t.o.v. \
+vorige week als die opvallend zijn (bijv. >20% verschil).
 
 "gsc": 4–5 bullet points (•). Geef totaalcijfers (klikken, vertoningen, positie) met % verandering. \
 Noem daarna 1–2 zoekwoorden die het meest zijn verbeterd in klikken of positie \
-(gebruik de velden clicks_delta en position_delta uit de data — positieve position_delta = hogere ranking).
+(positieve position_delta = hogere ranking).
 
-"ads": 4–5 bullet points (•), of null als er geen Ads-data is. Geef klikken, kosten en conversies met % verandering. \
-Benoem het vertoningspercentage (search_impression_share_pct) als dat beschikbaar is, \
-en of er impressies worden gemist door budget (lost_is_budget_pct) of ranking (lost_is_rank_pct).
+"ads": 4–5 bullet points (•), of null als er geen Ads-data is. Geef klikken, kosten en conversies \
+met % verandering. Benoem het vertoningspercentage (search_impression_share_pct) als beschikbaar, \
+en of impressies worden gemist door budget (lost_is_budget_pct) of ranking (lost_is_rank_pct).
 
-"tips": 2–3 concrete, actionable tips gebaseerd op alle resultaten. Genummerd 1. 2. 3. \
-Focus op de meest impactvolle acties die direct uitvoerbaar zijn.
+"tips": 2–3 concrete, actionable tips gebaseerd op alle resultaten. Genummerd 1. 2. 3.
 
 DATA:
 {data_json}"""
-
-# Prefill forces Claude to begin the response with `{` — no preamble possible
-_ASSISTANT_PREFILL = "{"
 
 
 @dataclass
@@ -55,13 +52,44 @@ class ReportSections:
     tips: str = ""
 
 
-def _strip_code_fences(text: str) -> str:
-    """Remove markdown code fences (```json ... ``` or ``` ... ```) if present."""
+def _extract_json(text: str) -> str:
+    """Extract the first complete JSON object from text, stripping any surrounding content."""
     text = text.strip()
-    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text
+
+    # Strip markdown code fences if present
+    fence_match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    # Find the first { and match its closing }
+    start = text.find("{")
+    if start == -1:
+        return text
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    # No balanced JSON found — return from first { to end as best effort
+    return text[start:]
 
 
 def summarize(client_name: str, week_nr: int, data: dict[str, Any]) -> ReportSections:
@@ -79,19 +107,13 @@ def summarize(client_name: str, week_nr: int, data: dict[str, Any]) -> ReportSec
         model="claude-sonnet-4-6",
         max_tokens=1600,
         system=_SYSTEM,
-        messages=[
-            {"role": "user", "content": user_message},
-            # Prefill: Claude will continue from this opening brace → guaranteed JSON start
-            {"role": "assistant", "content": _ASSISTANT_PREFILL},
-        ],
+        messages=[{"role": "user", "content": user_message}],
     )
 
-    completion = next(
+    raw = next(
         (block.text for block in response.content if block.type == "text"),
-        "",
+        "{}",
     )
-    # Reconstruct the full JSON: prepend the prefill character we injected
-    raw = _ASSISTANT_PREFILL + completion
 
     logger.debug(
         "Summary tokens: input=%d output=%d",
@@ -99,11 +121,10 @@ def summarize(client_name: str, week_nr: int, data: dict[str, Any]) -> ReportSec
         response.usage.output_tokens,
     )
 
-    # Safety net: strip code fences in case the model ignored the prefill somehow
-    raw = _strip_code_fences(raw)
+    candidate = _extract_json(raw)
 
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(candidate)
     except json.JSONDecodeError:
         logger.error("Claude returned invalid JSON:\n%s", raw)
         return ReportSections(ga4=raw)
